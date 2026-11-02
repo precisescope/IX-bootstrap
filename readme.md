@@ -35,7 +35,7 @@ Compilation
 
 Clone the repository:
 
-git clone https://github.com/YOUR_USERNAME/ix-bootstrap.git
+git clone https://github.com/precisescope/ix-bootstrap.git
 cd ix-bootstrap
 
 Compile:
