@@ -1,92 +1,121 @@
 IX Bootstrap
 
-A lightweight, ncurses-based Android ADB setup utility written in C, designed to run in Termux.
-
-IX Bootstrap provides an interactive terminal interface for wireless ADB pairing, device connections, APK downloads, and Android setup guidance.
+A lightweight, ncurses-based Android ADB utility written in C for Termux. Pair devices, connect over Wireless debugging, download APKs, and access setup guides from a simple terminal interface.
 
 Features
 
-- Interactive TUI — Keyboard-driven interface using ncurses.
-- ADB Pairing — Pair Android devices over Wireless debugging.
-- ADB Connection — Connect to devices using their IP address and connection port.
+- Wireless ADB pairing — Pair with an Android device using its pairing code.
+- ADB connection — Connect to a device using its IP address and connection port.
 - F-Droid — Download the F-Droid APK.
-- InstallerX Revived — Retrieve and download the latest stable APK from GitHub Releases.
-- APK Installation — Install downloaded applications through ADB.
-- Developer Options Guide — Instructions for enabling Android Developer options.
-- Shizuku Guide — Instructions for pairing Shizuku through Wireless debugging.
+- InstallerX Revived — Fetch the latest release APK from GitHub Releases.
+- APK installation — Install downloaded APKs through ADB.
+- Developer Options guide — Instructions for enabling Developer options.
+- Shizuku guide — Instructions for pairing Shizuku through Wireless debugging.
+- Terminal interface — An interactive ncurses-based menu.
 
 Requirements
 
-- Android
-- Termux
-- Clang
-- ncurses
-- Android platform tools ("adb")
-- curl
-- jq
+- Android device running Termux
+- "android-tools" (ADB)
+- "curl"
+- "jq"
 
-Dependencies
+For compiling from source, you'll also need "clang" and "ncurses".
 
-Install the required packages in Termux:
+Installation
 
-pkg install clang ncurses android-tools curl jq
+Option 1: Clone and run
 
-Compilation
+Install the required runtime packages:
+
+pkg update
+pkg install git android-tools curl jq
 
 Clone the repository:
 
-git clone https://github.com/precisescope/ix-bootstrap.git
-cd ix-bootstrap
+git clone https://github.com/precisescope/IX-bootstrap.git
+cd IX-bootstrap
+
+Make the executable runnable and launch it:
+
+chmod +x ix-bootstrap
+./ix-bootstrap
+
+«Note: The included executable is a precompiled binary. If it doesn't run on your device because of architecture or build compatibility, use Option 2 to compile it locally.»
+
+Option 2: Compile from source
+
+Install the build dependencies:
+
+pkg update
+pkg install git clang ncurses android-tools curl jq
+
+Clone the repository:
+
+git clone https://github.com/precisescope/IX-bootstrap.git
+cd IX-bootstrap
 
 Compile:
 
 clang -Wall -Wextra -O2 ix-bootstrap.c -o ix-bootstrap -lncurses
 
-Running
+Run:
 
 ./ix-bootstrap
 
-ADB Usage
+Using Wireless ADB
 
-IX Bootstrap supports Android Wireless debugging.
+Pairing a device
 
-Pairing
+1. Enable Developer options and Wireless debugging on the Android device.
+2. Open Wireless debugging and select Pair device with pairing code.
+3. In IX Bootstrap, choose the pairing option.
+4. Enter the device IP address, pairing port, and pairing code when prompted.
 
-1. Enable Wireless debugging.
-2. Select Pair device with pairing code.
-3. Enter the device IP, pairing port, and pairing code in IX Bootstrap.
+Connecting a device
 
-Connection
-
-1. Find the connection IP and port in Wireless debugging.
-2. Select Connect device with ADB.
+1. Find the IP address and connection port in Wireless debugging.
+2. Choose the ADB connection option.
 3. Enter the IP address and connection port.
 
-Pairing and connection ports are separate.
+Important: The pairing port and connection port are different. Use the appropriate port for each operation.
 
-APK Downloads
+APK downloads
 
-Downloaded APK files are stored in the Termux home directory:
+IX Bootstrap downloads APK files into your Termux home directory:
 
 - "F-Droid.apk"
 - "InstallerX-Revived.apk"
 
-Installation is performed using:
+Downloaded applications are installed through ADB. Review downloaded applications and their sources before installing them.
 
-adb install -r
+Troubleshooting
+
+- "Permission denied": Run "chmod +x ix-bootstrap".
+- "No such file or directory" or execution failure: The binary may be incompatible with your device or build environment. Try compiling from source.
+- "adb: command not found": Install "android-tools" in Termux.
+- Pairing fails: Check that Wireless debugging is enabled and that you're using the pairing port and pairing code.
+- Connection fails: Check the device IP, connection port, and that the devices can communicate over the network.
+- Download fails: Check your internet connection and retry.
+
+Project structure
+
+File| Purpose
+"ix-bootstrap"| Precompiled executable
+"ix-bootstrap.c"| C source code
+"DEPENDENCIES.md"| Dependency information
+"LICENSE"| MIT license
+
+Limitations
+
+IX Bootstrap is a helper utility. It does not root your device, automatically grant every permission, or guarantee that every APK can be installed. Android version, device configuration, and application requirements may affect installation.
 
 License
 
-This project is licensed under the MIT License. See "LICENSE" (LICENSE) for details.
+Released under the "MIT License" (LICENSE).
 
-Project Information
+Repository
 
-- Name: IX Bootstrap
-- Language: C
-- Interface: ncurses
-- Platform: Android / Termux
-- Version: 1.0
+"https://github.com/precisescope/IX-bootstrap" (https://github.com/precisescope/IX-bootstrap)
 
----
-
-Made for Android users who prefer getting things done from the terminal.
+Made for Android users who prefer getting shit done from the terminal.
