@@ -2,927 +2,978 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <ncurses.h>
-#include <ctype.h>
-#include <errno.h>
-#include <limits.h>
-#include <locale.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
+#include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <unistd.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <limits.h>
 
 #define APP_NAME "IX-BOOTSTRAP"
-#define FOOTER "Made by precisescope (GitHub) | 8bit_binary (Instagram) | pls follow me"
+#define APP_VERSION "2.0"
+#define FDROID_URL "https://f-droid.org/F-Droid.apk"
+#define INSTALLERX_API \
+    "https://api.github.com/repos/wxxsfxyzm/InstallerX-Revived/releases/latest"
 
-#define IP_SIZE 128
+#define CONFIG_DIR ".config/ix-bootstrap"
+#define IP_FILE ".config/ix-bootstrap/last_ip"
+
+#define HOST_SIZE 256
 #define PORT_SIZE 16
 
-#define CP_NORMAL   1
-#define CP_MENU     2
-#define CP_SELECTED 3
-#define CP_TITLE    4
-#define CP_FOOTER   5
-#define CP_FIELD    6
+enum {
+    CP_NORMAL = 1,
+    CP_PANEL,
+    CP_TITLE,
+    CP_SELECTED,
+    CP_MUTED,
+    CP_ACCENT,
+    CP_BORDER,
+    CP_INPUT
+};
 
-static char last_ip[IP_SIZE] = "";
-static char status_text[256] = "";
-static int colors_enabled = 0;
+static const char *menu_items[] = {
+    "Pair device",
+    "Connect device",
+    "Install / Upgrade F-Droid",
+    "Install / Upgrade InstallerX",
+    "Developer options help",
+    "Shizuku help",
+    "About",
+    "Exit"
+};
 
-/* ---------- Configuration ---------- */
+#define MENU_COUNT (sizeof(menu_items) / sizeof(menu_items[0]))
 
-static void config_path(char *out, size_t size, const char *name)
+static int use_colors = 0;
+
+/* ---------------------------------------------------------
+   Configuration
+   --------------------------------------------------------- */
+
+static void get_config_path(char *out, size_t size,
+                            const char *filename)
 {
     const char *home = getenv("HOME");
 
-    if (!home || !*home)
+    if (!home)
         home = ".";
 
-    snprintf(out, size, "%s/.config/ix-bootstrap/%s", home, name);
+    snprintf(out, size, "%s/%s/%s",
+             home, CONFIG_DIR, filename);
 }
 
-static void load_last_ip(void)
+static void ensure_config_dir(void)
 {
     char path[PATH_MAX];
-    config_path(path, sizeof(path), "last_ip");
+    const char *home = getenv("HOME");
 
-    FILE *f = fopen(path, "r");
-    if (!f)
-        return;
+    if (!home)
+        home = ".";
 
-    if (fgets(last_ip, sizeof(last_ip), f))
-        last_ip[strcspn(last_ip, "\r\n")] = '\0';
+    snprintf(path, sizeof(path), "%s/.config", home);
+    mkdir(path, 0700);
 
-    fclose(f);
+    snprintf(path, sizeof(path), "%s/.config/ix-bootstrap", home);
+    mkdir(path, 0700);
 }
 
 static void save_last_ip(const char *ip)
 {
-    char dir[PATH_MAX];
     char path[PATH_MAX];
-    const char *home = getenv("HOME");
+    FILE *fp;
 
-    if (!home || !*home)
-        home = ".";
+    ensure_config_dir();
+    get_config_path(path, sizeof(path), "last_ip");
 
-    snprintf(dir, sizeof(dir), "%s/.config", home);
-    mkdir(dir, 0700);
+    fp = fopen(path, "w");
 
-    snprintf(dir, sizeof(dir), "%s/.config/ix-bootstrap", home);
-    mkdir(dir, 0700);
-
-    config_path(path, sizeof(path), "last_ip");
-
-    FILE *f = fopen(path, "w");
-    if (!f) {
-        snprintf(status_text, sizeof(status_text),
-                 "Could not save the last device IP.");
+    if (!fp)
         return;
+
+    fprintf(fp, "%s\n", ip);
+    fclose(fp);
+}
+
+static void load_last_ip(char *ip, size_t size)
+{
+    char path[PATH_MAX];
+    FILE *fp;
+
+    ip[0] = '\0';
+
+    get_config_path(path, sizeof(path), "last_ip");
+
+    fp = fopen(path, "r");
+
+    if (!fp)
+        return;
+
+    if (fgets(ip, (int)size, fp)) {
+        ip[strcspn(ip, "\r\n")] = '\0';
     }
 
-    fprintf(f, "%s\n", ip);
-    fclose(f);
-
-    snprintf(last_ip, sizeof(last_ip), "%s", ip);
+    fclose(fp);
 }
 
-static void set_status(const char *message)
-{
-    snprintf(status_text, sizeof(status_text), "%s",
-             message ? message : "");
-}
-
-/* ---------- Colors and layout ---------- */
+/* ---------------------------------------------------------
+   Terminal theme
+   --------------------------------------------------------- */
 
 static void init_theme(void)
 {
     if (!has_colors())
         return;
 
-    if (start_color() == ERR)
-        return;
+    start_color();
+    use_default_colors();
 
-    colors_enabled = 1;
-
-    /*
-     * Use a real black background instead of the terminal's
-     * default background whenever the terminal supports it.
-     */
-    init_pair(CP_NORMAL,   COLOR_WHITE, COLOR_BLACK);
-    init_pair(CP_MENU,     COLOR_BLACK, COLOR_WHITE);
+    init_pair(CP_NORMAL, COLOR_WHITE, COLOR_BLACK);
+    init_pair(CP_PANEL, COLOR_WHITE, COLOR_BLACK);
+    init_pair(CP_TITLE, COLOR_WHITE, COLOR_BLACK);
     init_pair(CP_SELECTED, COLOR_BLACK, COLOR_CYAN);
-    init_pair(CP_TITLE,    COLOR_WHITE, COLOR_BLACK);
-    init_pair(CP_FOOTER,   COLOR_WHITE, COLOR_BLACK);
-    init_pair(CP_FIELD,    COLOR_WHITE, COLOR_BLACK);
+    init_pair(CP_MUTED, COLOR_CYAN, COLOR_BLACK);
+    init_pair(CP_ACCENT, COLOR_CYAN, COLOR_BLACK);
+    init_pair(CP_BORDER, COLOR_BLUE, COLOR_BLACK);
+    init_pair(CP_INPUT, COLOR_WHITE, COLOR_BLUE);
 
     bkgd(COLOR_PAIR(CP_NORMAL));
+
+    use_colors = 1;
 }
 
-static int panel_width(void)
+static void set_color(int pair)
 {
-    int width = COLS - 4;
-
-    if (width > 68)
-        width = 68;
-    if (width < 10)
-        width = 10;
-
-    return width;
+    if (use_colors)
+        attron(COLOR_PAIR(pair));
 }
 
-static int panel_x(int width)
+static void unset_color(int pair)
 {
-    int x = (COLS - width) / 2;
-    return x < 0 ? 0 : x;
+    if (use_colors)
+        attroff(COLOR_PAIR(pair));
+}
+
+static void draw_centered(int y, const char *text, int pair)
+{
+    int rows, cols;
+    int x;
+
+    getmaxyx(stdscr, rows, cols);
+
+    (void)rows;
+
+    x = (cols - (int)strlen(text)) / 2;
+
+    if (x < 0)
+        x = 0;
+
+    set_color(pair);
+    mvaddnstr(y, x, text, cols - x);
+    unset_color(pair);
+}
+
+static void draw_box(int y, int x, int height, int width)
+{
+    int i;
+
+    if (height < 2 || width < 2)
+        return;
+
+    set_color(CP_BORDER);
+
+    mvaddch(y, x, ACS_ULCORNER);
+    mvaddch(y, x + width - 1, ACS_URCORNER);
+    mvaddch(y + height - 1, x, ACS_LLCORNER);
+    mvaddch(y + height - 1, x + width - 1, ACS_LRCORNER);
+
+    for (i = 1; i < width - 1; i++) {
+        mvaddch(y, x + i, ACS_HLINE);
+        mvaddch(y + height - 1, x + i, ACS_HLINE);
+    }
+
+    for (i = 1; i < height - 1; i++) {
+        mvaddch(y + i, x, ACS_VLINE);
+        mvaddch(y + i, x + width - 1, ACS_VLINE);
+    }
+
+    unset_color(CP_BORDER);
+}
+
+static void draw_header(void)
+{
+    int rows, cols;
+
+    getmaxyx(stdscr, rows, cols);
+
+    erase();
+
+    draw_centered(1, APP_NAME, CP_TITLE);
+    draw_centered(2, "ANDROID DEVICE MANAGEMENT TOOL", CP_MUTED);
+
+    if (rows > 4 && cols > 10) {
+        set_color(CP_BORDER);
+        mvhline(4, 2, ACS_HLINE, cols - 4);
+        unset_color(CP_BORDER);
+    }
 }
 
 static void draw_footer(void)
 {
-    if (LINES < 1)
+    int rows, cols;
+
+    getmaxyx(stdscr, rows, cols);
+
+    if (rows < 3)
         return;
 
-    int y = LINES - 1;
-
-    attron(COLOR_PAIR(CP_FOOTER) | A_DIM);
-    mvhline(y, 0, ' ', COLS);
-    mvaddnstr(y, 0, FOOTER, COLS > 1 ? COLS - 1 : 0);
-    attroff(COLOR_PAIR(CP_FOOTER) | A_DIM);
+    set_color(CP_MUTED);
+    mvaddnstr(rows - 3, 2,
+        "ARROWS: Navigate   ENTER: Select   ESC: Back",
+        cols - 4);
+    mvaddnstr(rows - 2, 2,
+        "Made by precisescope (GitHub) | 8bit_binary (Instagram)",
+        cols - 4);
+    unset_color(CP_MUTED);
 }
 
-static void draw_header(const char *title)
+/* ---------------------------------------------------------
+   Input and utility functions
+   --------------------------------------------------------- */
+
+static void pause_key(void)
 {
-    erase();
-    bkgd(COLOR_PAIR(CP_NORMAL));
+    int rows, cols;
 
-    int width = panel_width();
-    int x = panel_x(width);
+    getmaxyx(stdscr, rows, cols);
 
-    attron(COLOR_PAIR(CP_TITLE) | A_BOLD);
-    mvaddnstr(1, x, APP_NAME, width);
-    attroff(COLOR_PAIR(CP_TITLE) | A_BOLD);
+    set_color(CP_MUTED);
 
-    attron(COLOR_PAIR(CP_TITLE));
-    mvaddnstr(2, x, title, width);
-    mvhline(3, x, ACS_HLINE, width);
-    attroff(COLOR_PAIR(CP_TITLE));
+    if (rows > 2)
+        mvaddstr(rows - 4, 2, "Press any key to continue...");
 
-    if (status_text[0] && LINES > 5) {
-        attron(COLOR_PAIR(CP_FOOTER) | A_DIM);
-        mvaddnstr(LINES - 3, x, status_text,
-                  COLS - x > 1 ? COLS - x - 1 : 0);
-        attroff(COLOR_PAIR(CP_FOOTER) | A_DIM);
+    unset_color(CP_MUTED);
+
+    refresh();
+    getch();
+}
+
+static void show_message(const char *message)
+{
+    int rows, cols;
+
+    getmaxyx(stdscr, rows, cols);
+
+    draw_header();
+
+    if (rows > 8)
+        draw_centered(rows / 2, message, CP_ACCENT);
+
+    draw_footer();
+    refresh();
+    pause_key();
+}
+
+static int have_command(const char *command)
+{
+    char *path = getenv("PATH");
+    char *copy;
+    char *token;
+
+    if (!path)
+        return 0;
+
+    copy = strdup(path);
+
+    if (!copy)
+        return 0;
+
+    token = strtok(copy, ":");
+
+    while (token) {
+        char candidate[PATH_MAX];
+
+        snprintf(candidate, sizeof(candidate),
+                 "%s/%s", token, command);
+
+        if (access(candidate, X_OK) == 0) {
+            free(copy);
+            return 1;
+        }
+
+        token = strtok(NULL, ":");
+    }
+
+    free(copy);
+    return 0;
+}
+
+static int valid_port(const char *port)
+{
+    char *end;
+    long value;
+
+    if (!port || !*port)
+        return 0;
+
+    errno = 0;
+    value = strtol(port, &end, 10);
+
+    return errno == 0 &&
+           *end == '\0' &&
+           value >= 1 &&
+           value <= 65535;
+}
+
+static int valid_host(const char *host)
+{
+    size_t i;
+
+    if (!host || !*host)
+        return 0;
+
+    if (strlen(host) >= HOST_SIZE)
+        return 0;
+
+    for (i = 0; host[i]; i++) {
+        unsigned char c = (unsigned char)host[i];
+
+        if (!(c == '.' || c == ':' || c == '-' ||
+              c == '_' ||
+              (c >= '0' && c <= '9') ||
+              (c >= 'a' && c <= 'z') ||
+              (c >= 'A' && c <= 'Z')))
+            return 0;
+    }
+
+    return 1;
+}
+
+static int ask_field(const char *label, char *buffer,
+                     size_t size, const char *default_value)
+{
+    int rows, cols;
+    int y;
+
+    getmaxyx(stdscr, rows, cols);
+
+    draw_header();
+
+    y = rows / 2 - 2;
+
+    set_color(CP_TITLE);
+    mvaddstr(y, 4, label);
+    unset_color(CP_TITLE);
+
+    set_color(CP_INPUT);
+    mvaddstr(y + 2, 4, "> ");
+    unset_color(CP_INPUT);
+
+    if (default_value && *default_value)
+        snprintf(buffer, size, "%s", default_value);
+    else
+        buffer[0] = '\0';
+
+    echo();
+    curs_set(1);
+
+    mvaddnstr(y + 2, 6, buffer, cols - 10);
+    move(y + 2, 6 + (int)strlen(buffer));
+
+    getnstr(buffer, (int)size - 1);
+
+    noecho();
+    curs_set(0);
+
+    if (buffer[0] == '\0' && default_value)
+        snprintf(buffer, size, "%s", default_value);
+
+    return 1;
+}
+
+/* ---------------------------------------------------------
+   External commands
+   --------------------------------------------------------- */
+
+static int run_command(char *const argv[])
+{
+    pid_t pid;
+    int status;
+
+    def_prog_mode();
+    endwin();
+
+    pid = fork();
+
+    if (pid < 0) {
+        reset_prog_mode();
+        refresh();
+        show_message("Could not start process.");
+        return -1;
+    }
+
+    if (pid == 0) {
+        execvp(argv[0], argv);
+        perror("execvp");
+        _exit(127);
+    }
+
+    while (waitpid(pid, &status, 0) < 0) {
+        if (errno != EINTR)
+            break;
+    }
+
+    reset_prog_mode();
+    clear();
+    refresh();
+
+    if (WIFEXITED(status))
+        return WEXITSTATUS(status);
+
+    return -1;
+}
+
+static int check_adb(void)
+{
+    if (!have_command("adb")) {
+        show_message("ADB not found. Install android-tools first.");
+        return 0;
+    }
+
+    return 1;
+}
+
+/* ---------------------------------------------------------
+   ADB pairing and connection
+   --------------------------------------------------------- */
+
+static void pair_device(void)
+{
+    char ip[HOST_SIZE];
+    char port[PORT_SIZE];
+    char address[HOST_SIZE + PORT_SIZE + 4];
+    char previous[HOST_SIZE];
+
+    char *argv[4];
+
+    if (!check_adb())
+        return;
+
+    load_last_ip(previous, sizeof(previous));
+
+    ask_field("Device IP address", ip, sizeof(ip), previous);
+
+    if (!valid_host(ip)) {
+        show_message("Invalid device address.");
+        return;
+    }
+
+    ask_field("Pairing port", port, sizeof(port), "");
+
+    if (!valid_port(port)) {
+        show_message("Invalid pairing port.");
+        return;
+    }
+
+    snprintf(address, sizeof(address), "%s:%s", ip, port);
+
+    argv[0] = "adb";
+    argv[1] = "pair";
+    argv[2] = address;
+    argv[3] = NULL;
+
+    save_last_ip(ip);
+
+    run_command(argv);
+    show_message("Pairing command finished.");
+}
+
+static void connect_device(void)
+{
+    char ip[HOST_SIZE];
+    char port[PORT_SIZE];
+    char address[HOST_SIZE + PORT_SIZE + 4];
+    char previous[HOST_SIZE];
+
+    char *argv[4];
+
+    if (!check_adb())
+        return;
+
+    load_last_ip(previous, sizeof(previous));
+
+    ask_field("Device IP address", ip, sizeof(ip), previous);
+
+    if (!valid_host(ip)) {
+        show_message("Invalid device address.");
+        return;
+    }
+
+    ask_field("Connection port", port, sizeof(port), "");
+
+    if (!valid_port(port)) {
+        show_message("Invalid connection port.");
+        return;
+    }
+
+    snprintf(address, sizeof(address), "%s:%s", ip, port);
+
+    argv[0] = "adb";
+    argv[1] = "connect";
+    argv[2] = address;
+    argv[3] = NULL;
+
+    save_last_ip(ip);
+
+    run_command(argv);
+    show_message("Connection command finished.");
+}
+
+/* ---------------------------------------------------------
+   APK downloading and installation
+   --------------------------------------------------------- */
+
+static int download_file(const char *url, char *output,
+                         size_t output_size)
+{
+    char template_path[PATH_MAX];
+    int fd;
+    char *argv[6];
+
+    const char *tmp = getenv("TMPDIR");
+
+    if (!tmp || !*tmp)
+        tmp = "/data/data/com.termux/files/usr/tmp";
+
+    snprintf(template_path, sizeof(template_path),
+             "%s/ix-bootstrap-XXXXXX", tmp);
+
+    fd = mkstemp(template_path);
+
+    if (fd < 0) {
+        snprintf(template_path, sizeof(template_path),
+                 "/tmp/ix-bootstrap-XXXXXX");
+
+        fd = mkstemp(template_path);
+    }
+
+    if (fd < 0) {
+        show_message("Could not create temporary file.");
+        return 0;
+    }
+
+    close(fd);
+
+    argv[0] = "curl";
+    argv[1] = "-fL";
+    argv[2] = "--progress-bar";
+    argv[3] = "-o";
+    argv[4] = template_path;
+    argv[5] = (char *)url;
+
+    {
+        char *command[] = {
+            "curl", "-fL", "--progress-bar",
+            "-o", template_path, (char *)url, NULL
+        };
+
+        if (run_command(command) != 0) {
+            unlink(template_path);
+            show_message("Download failed.");
+            return 0;
+        }
+    }
+
+    snprintf(output, output_size, "%s", template_path);
+    return 1;
+}
+
+static void install_apk(const char *url)
+{
+    char path[PATH_MAX];
+    char *argv[5];
+
+    if (!check_adb())
+        return;
+
+    if (!have_command("curl")) {
+        show_message("curl is not installed.");
+        return;
+    }
+
+    if (!download_file(url, path, sizeof(path)))
+        return;
+
+    argv[0] = "adb";
+    argv[1] = "install";
+    argv[2] = "-r";
+    argv[3] = path;
+    argv[4] = NULL;
+
+    run_command(argv);
+
+    unlink(path);
+
+    show_message("APK installation command finished.");
+}
+
+static void install_fdroid(void)
+{
+    install_apk(FDROID_URL);
+}
+
+static int get_installerx_url(char *url, size_t size)
+{
+    FILE *pipe;
+    char line[2048];
+
+    const char *command =
+        "curl -fsSL '" INSTALLERX_API "' | "
+        "jq -r '.assets[] | "
+        "select(.name | endswith(\".apk\")) | "
+        ".browser_download_url' | head -n 1";
+
+    pipe = popen(command, "r");
+
+    if (!pipe)
+        return 0;
+
+    if (!fgets(line, sizeof(line), pipe)) {
+        pclose(pipe);
+        return 0;
+    }
+
+    pclose(pipe);
+
+    line[strcspn(line, "\r\n")] = '\0';
+
+    if (strncmp(line, "https://", 8) != 0)
+        return 0;
+
+    snprintf(url, size, "%s", line);
+
+    return 1;
+}
+
+static void install_installerx(void)
+{
+    char url[2048];
+
+    if (!have_command("curl") || !have_command("jq")) {
+        show_message("Install curl and jq first.");
+        return;
+    }
+
+    draw_header();
+    draw_centered(7, "Checking latest InstallerX release...",
+                  CP_ACCENT);
+    draw_footer();
+    refresh();
+
+    if (!get_installerx_url(url, sizeof(url))) {
+        show_message("Could not find an InstallerX APK release.");
+        return;
+    }
+
+    install_apk(url);
+}
+
+/* ---------------------------------------------------------
+   Information pages
+   --------------------------------------------------------- */
+
+static void information_page(const char *heading,
+                             const char *const lines[],
+                             int count)
+{
+    int rows, cols;
+    int i;
+
+    draw_header();
+
+    getmaxyx(stdscr, rows, cols);
+
+    set_color(CP_TITLE);
+    mvaddnstr(6, 4, heading, cols - 8);
+    unset_color(CP_TITLE);
+
+    for (i = 0; i < count && i < rows - 12; i++) {
+        set_color(CP_NORMAL);
+        mvaddnstr(8 + i, 4, lines[i], cols - 8);
+        unset_color(CP_NORMAL);
+    }
+
+    draw_footer();
+    refresh();
+    pause_key();
+}
+
+static void developer_help(void)
+{
+    const char *lines[] = {
+        "1. Open Android Settings.",
+        "2. Find About phone.",
+        "3. Open Software information if needed.",
+        "4. Tap Build number repeatedly.",
+        "5. Return to Settings.",
+        "6. Open Developer options.",
+        "7. Enable Wireless debugging.",
+        "",
+        "Pairing and connection use separate ports.",
+        "Keep your device and Termux on the same network."
+    };
+
+    information_page("DEVELOPER OPTIONS HELP",
+                     lines,
+                     sizeof(lines) / sizeof(lines[0]));
+}
+
+static void shizuku_help(void)
+{
+    const char *lines[] = {
+        "Shizuku allows supported apps to use system APIs.",
+        "",
+        "1. Install Shizuku on your Android device.",
+        "2. Enable Developer options.",
+        "3. Enable Wireless debugging.",
+        "4. Open Shizuku and choose Wireless debugging.",
+        "5. Follow its pairing instructions.",
+        "6. Start the Shizuku service.",
+        "",
+        "Some apps require Shizuku to be running.",
+        "ADB pairing and Shizuku setup are separate steps."
+    };
+
+    information_page("SHIZUKU HELP",
+                     lines,
+                     sizeof(lines) / sizeof(lines[0]));
+}
+
+static void about_page(void)
+{
+    const char *lines[] = {
+        "IX Bootstrap 2.0",
+        "",
+        "Its just a fkn third party apk installer and a",
+        "f-droid store installer for android cause google",
+        "thought it would be funny to put out yet another",
+        "major f*ckup update....so anyways hope you guys",
+        "like this program I made after a shower thought",
+        "also pls follow me in instagram - 8bit_binary",
+        "",
+        "Made by precisescope (GitHub)."
+    };
+
+    information_page("ABOUT IX BOOTSTRAP",
+                     lines,
+                     sizeof(lines) / sizeof(lines[0]));
+}
+
+/* ---------------------------------------------------------
+   Main menu
+   --------------------------------------------------------- */
+
+static void draw_menu(int selected)
+{
+    int rows, cols;
+    int panel_width;
+    int panel_x;
+    int panel_y = 6;
+    int i;
+
+    getmaxyx(stdscr, rows, cols);
+
+    draw_header();
+
+    panel_width = cols - 8;
+
+    if (panel_width > 66)
+        panel_width = 66;
+
+    if (panel_width < 20)
+        panel_width = 20;
+
+    panel_x = (cols - panel_width) / 2;
+
+    if (rows < 17 || cols < 28) {
+        draw_centered(rows / 2,
+            "Terminal too small - resize to continue.",
+            CP_ACCENT);
+
+        draw_footer();
+        refresh();
+        return;
+    }
+
+    draw_box(panel_y, panel_x, 12, panel_width);
+
+    set_color(CP_MUTED);
+    mvaddnstr(panel_y + 1, panel_x + 3,
+              "MAIN MENU", panel_width - 6);
+    unset_color(CP_MUTED);
+
+    for (i = 0; i < (int)MENU_COUNT; i++) {
+        int y = panel_y + 3 + i;
+
+        if (i == selected) {
+            set_color(CP_SELECTED);
+            mvhline(y, panel_x + 2, ' ', panel_width - 4);
+            mvaddnstr(y, panel_x + 4,
+                      "> ", 2);
+            mvaddnstr(y, panel_x + 6,
+                      menu_items[i], panel_width - 10);
+            unset_color(CP_SELECTED);
+        } else {
+            set_color(CP_NORMAL);
+            mvaddnstr(y, panel_x + 4,
+                      "  ", 2);
+            mvaddnstr(y, panel_x + 6,
+                      menu_items[i], panel_width - 10);
+            unset_color(CP_NORMAL);
+        }
     }
 
     draw_footer();
     refresh();
 }
 
-/* ---------- Command helpers ---------- */
-
-static int have_command(const char *name)
-{
-    const char *path_env = getenv("PATH");
-
-    if (!path_env || !*path_env)
-        return 0;
-
-    char *copy = strdup(path_env);
-    if (!copy)
-        return 0;
-
-    int found = 0;
-    char *saveptr = NULL;
-
-    for (char *dir = strtok_r(copy, ":", &saveptr);
-         dir != NULL;
-         dir = strtok_r(NULL, ":", &saveptr)) {
-
-        char candidate[PATH_MAX];
-        snprintf(candidate, sizeof(candidate), "%s/%s", dir, name);
-
-        if (access(candidate, X_OK) == 0) {
-            found = 1;
-            break;
-        }
-    }
-
-    free(copy);
-    return found;
-}
-
-static int run_command(char *const argv[])
-{
-    int result = -1;
-    pid_t pid = fork();
-
-    if (pid < 0) {
-        set_status("Could not start the command.");
-        return -1;
-    }
-
-    if (pid == 0) {
-        endwin();
-        execvp(argv[0], argv);
-        perror("execvp");
-        _exit(127);
-    }
-
-    while (waitpid(pid, &result, 0) < 0) {
-        if (errno != EINTR) {
-            result = -1;
-            break;
-        }
-    }
-
-    reset_prog_mode();
-    refresh();
-    clear();
-    refresh();
-
-    if (result >= 0 && WIFEXITED(result))
-        return WEXITSTATUS(result);
-
-    return -1;
-}
-
-/* ---------- Messages ---------- */
-
-static void pause_key(void)
-{
-    if (LINES < 2)
-        return;
-
-    attron(COLOR_PAIR(CP_FOOTER) | A_DIM);
-    mvaddnstr(LINES - 2, 2, "Press any key to continue...",
-              COLS > 4 ? COLS - 4 : 1);
-    attroff(COLOR_PAIR(CP_FOOTER) | A_DIM);
-
-    refresh();
-    getch();
-}
-
-static void show_message(const char *title, const char *message)
-{
-    draw_header(title);
-
-    int width = panel_width();
-    int x = panel_x(width);
-    int text_width = width - 4;
-
-    if (text_width < 1)
-        text_width = 1;
-
-    int y = 5;
-    int bottom = LINES - 4;
-
-    const char *p = message ? message : "";
-
-    while (*p && y < bottom) {
-        if (*p == '\n') {
-            y++;
-            p++;
-            continue;
-        }
-
-        while (*p == ' ')
-            p++;
-
-        if (!*p)
-            break;
-
-        int len = 0;
-        while (p[len] && p[len] != '\n' && len < text_width)
-            len++;
-
-        if (p[len] && p[len] != '\n') {
-            int j = len;
-            while (j > 0 && p[j] != ' ')
-                j--;
-
-            if (j > 0)
-                len = j;
-        }
-
-        if (len == 0)
-            len = 1;
-
-        mvaddnstr(y++, x + 2, p, len);
-        p += len;
-
-        while (*p == ' ')
-            p++;
-    }
-
-    pause_key();
-}
-
-/* ---------- Validation and forms ---------- */
-
-static int valid_host(const char *host)
-{
-    if (!host || !*host)
-        return 0;
-
-    for (const unsigned char *p = (const unsigned char *)host; *p; p++) {
-        if (!(isalnum(*p) || *p == '.' || *p == '-' || *p == ':'))
-            return 0;
-    }
-
-    return 1;
-}
-
-static int valid_port(const char *port)
-{
-    if (!port || !*port)
-        return 0;
-
-    for (const unsigned char *p = (const unsigned char *)port; *p; p++) {
-        if (!isdigit(*p))
-            return 0;
-    }
-
-    char *end = NULL;
-    long value = strtol(port, &end, 10);
-
-    return end && *end == '\0' && value >= 1 && value <= 65535;
-}
-
-static void edit_field(const char *label, char *buffer, size_t capacity,
-                       int y, int x, int field_width)
-{
-    if (capacity < 2 || field_width < 1)
-        return;
-
-    size_t length = strlen(buffer);
-    size_t cursor = length;
-
-    curs_set(1);
-
-    for (;;) {
-        int label_len = (int)strlen(label);
-        int input_x = x + label_len;
-        int visible = field_width;
-
-        if (input_x >= COLS - 1)
-            break;
-
-        if (visible > COLS - input_x - 1)
-            visible = COLS - input_x - 1;
-
-        if (visible < 1)
-            visible = 1;
-
-        mvaddnstr(y, x, label, label_len);
-
-        attron(COLOR_PAIR(CP_FIELD));
-        mvhline(y, input_x, ' ', visible);
-
-        size_t start = 0;
-        if (cursor >= (size_t)visible && visible > 0)
-            start = cursor - (size_t)visible + 1;
-
-        mvaddnstr(y, input_x, buffer + start, visible);
-        attroff(COLOR_PAIR(CP_FIELD));
-
-        int cursor_x = input_x + (int)(cursor - start);
-        if (cursor_x >= input_x + visible)
-            cursor_x = input_x + visible - 1;
-
-        move(y, cursor_x);
-        refresh();
-
-        int ch = getch();
-
-        if (ch == '\n' || ch == KEY_ENTER ||
-            ch == KEY_UP || ch == KEY_DOWN || ch == '\t') {
-            break;
-        } else if (ch == 27) {
-            break;
-        } else if (ch == KEY_LEFT) {
-            if (cursor > 0)
-                cursor--;
-        } else if (ch == KEY_RIGHT) {
-            if (cursor < length)
-                cursor++;
-        } else if (ch == KEY_HOME || ch == 1) {
-            cursor = 0;
-        } else if (ch == KEY_END || ch == 5) {
-            cursor = length;
-        } else if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
-            if (cursor > 0) {
-                memmove(buffer + cursor - 1, buffer + cursor,
-                        length - cursor + 1);
-                cursor--;
-                length--;
-            }
-        } else if (ch == KEY_DC) {
-            if (cursor < length) {
-                memmove(buffer + cursor, buffer + cursor + 1,
-                        length - cursor);
-                length--;
-            }
-        } else if (ch >= 32 && ch <= 126 && length + 1 < capacity) {
-            memmove(buffer + cursor + 1, buffer + cursor,
-                    length - cursor + 1);
-            buffer[cursor++] = (char)ch;
-            length++;
-        }
-    }
-
-    curs_set(0);
-}
-
-static int form(const char *title,
-                const char *host_label, char *host, size_t host_size,
-                const char *port_label, char *port, size_t port_size)
-{
-    int focus = 0;
-
-    for (;;) {
-        draw_header(title);
-
-        int width = panel_width();
-        int x = panel_x(width);
-
-        mvaddnstr(5, x, "Arrow keys: navigate   Enter: edit/select",
-                  width);
-        mvaddnstr(6, x, "Esc: cancel", width);
-
-        int label_len = (int)strlen(host_label);
-        int port_len = (int)strlen(port_label);
-        int field_x = x + 2;
-
-        if (focus == 0)
-            attron(A_BOLD | A_UNDERLINE);
-        mvaddnstr(8, field_x, host_label, width - 4);
-        if (focus == 0)
-            attroff(A_BOLD | A_UNDERLINE);
-
-        attron(COLOR_PAIR(CP_FIELD));
-        mvhline(9, field_x, ' ', width - 4);
-        mvaddnstr(9, field_x, host, width - 4);
-        attroff(COLOR_PAIR(CP_FIELD));
-
-        if (focus == 1)
-            attron(A_BOLD | A_UNDERLINE);
-        mvaddnstr(11, field_x, port_label, width - 4);
-        if (focus == 1)
-            attroff(A_BOLD | A_UNDERLINE);
-
-        attron(COLOR_PAIR(CP_FIELD));
-        mvhline(12, field_x, ' ', width - 4);
-        mvaddnstr(12, field_x, port, width - 4);
-        attroff(COLOR_PAIR(CP_FIELD));
-
-        (void)label_len;
-        (void)port_len;
-
-        if (focus == 2) {
-            attron(COLOR_PAIR(CP_SELECTED) | A_BOLD);
-            mvaddstr(15, x + 2, "[ Continue ]");
-            attroff(COLOR_PAIR(CP_SELECTED) | A_BOLD);
-        } else {
-            attron(COLOR_PAIR(CP_MENU));
-            mvaddstr(15, x + 2, "             ");
-            mvaddstr(15, x + 2, "[ Continue ]");
-            attroff(COLOR_PAIR(CP_MENU));
-        }
-
-        if (focus == 3) {
-            attron(COLOR_PAIR(CP_SELECTED) | A_BOLD);
-            mvaddstr(15, x + 19, "[ Cancel ]");
-            attroff(COLOR_PAIR(CP_SELECTED) | A_BOLD);
-        } else {
-            attron(COLOR_PAIR(CP_MENU));
-            mvaddstr(15, x + 19, "[ Cancel ]");
-            attroff(COLOR_PAIR(CP_MENU));
-        }
-
-        draw_footer();
-        refresh();
-
-        int ch = getch();
-
-        if (ch == 27)
-            return 0;
-
-        if (ch == KEY_UP) {
-            focus = (focus + 3) % 4;
-        } else if (ch == KEY_DOWN) {
-            focus = (focus + 1) % 4;
-        } else if (ch == KEY_LEFT || ch == KEY_RIGHT) {
-            if (focus == 2)
-                focus = 3;
-            else if (focus == 3)
-                focus = 2;
-        } else if (ch == '\t') {
-            focus = (focus + 1) % 4;
-        } else if (ch == '\n' || ch == KEY_ENTER) {
-            if (focus == 0) {
-                edit_field(host_label, host, host_size,
-                           9, field_x, width - 4);
-            } else if (focus == 1) {
-                edit_field(port_label, port, port_size,
-                           12, field_x, width - 4);
-            } else if (focus == 3) {
-                return 0;
-            } else {
-                if (!valid_host(host)) {
-                    set_status("Enter a valid IP address or hostname.");
-                } else if (!valid_port(port)) {
-                    set_status("Enter a port from 1 to 65535.");
-                } else {
-                    set_status("");
-                    return 1;
-                }
-            }
-        }
-    }
-}
-
-/* ---------- ADB pairing and connection ---------- */
-
-static int adb_available(void)
-{
-    return have_command("adb");
-}
-
-static void pair_device(void)
-{
-    char host[IP_SIZE] = "";
-    char port[PORT_SIZE] = "";
-
-    snprintf(host, sizeof(host), "%s", last_ip);
-
-    if (!form("Pair device",
-              "Device IP: ", host, sizeof(host),
-              "Pairing port: ", port, sizeof(port)))
-        return;
-
-    save_last_ip(host);
-
-    char address[IP_SIZE + PORT_SIZE + 4];
-    snprintf(address, sizeof(address), "%s:%s", host, port);
-
-    char *const argv[] = {"adb", "pair", address, NULL};
-    int rc = run_command(argv);
-
-    show_message("Pair device",
-        rc == 0
-        ? "ADB pairing command completed. Follow any pairing-code prompt in the terminal."
-        : "Pairing failed. Check the address, pairing port and pairing code.");
-}
-
-static void connect_device(void)
-{
-    char host[IP_SIZE] = "";
-    char port[PORT_SIZE] = "";
-
-    snprintf(host, sizeof(host), "%s", last_ip);
-
-    if (!form("Connect device",
-              "Device IP: ", host, sizeof(host),
-              "Connection port: ", port, sizeof(port)))
-        return;
-
-    save_last_ip(host);
-
-    char address[IP_SIZE + PORT_SIZE + 4];
-    snprintf(address, sizeof(address), "%s:%s", host, port);
-
-    char *const argv[] = {"adb", "connect", address, NULL};
-    int rc = run_command(argv);
-
-    show_message("Connect device",
-        rc == 0
-        ? "ADB connection command completed. Check its output for device status."
-        : "Connection failed. Check the IP and connection port.");
-}
-
-/* ---------- APK downloading and installation ---------- */
-
-static int download_file(const char *url, char *path, size_t path_size)
-{
-    const char *tmp = getenv("TMPDIR");
-
-    if (!tmp || !*tmp)
-        tmp = "/data/data/com.termux/files/usr/tmp";
-
-    snprintf(path, path_size, "%s/ix-bootstrap-XXXXXX", tmp);
-
-    int fd = mkstemp(path);
-    if (fd < 0) {
-        set_status("Could not create a temporary download file.");
-        return 0;
-    }
-    close(fd);
-
-    char *const argv[] = {
-        "curl", "-fL", "--retry", "2", "--connect-timeout", "15",
-        "-o", path, (char *)url, NULL
-    };
-
-    if (run_command(argv) != 0) {
-        unlink(path);
-        set_status("Download failed. Check your internet connection.");
-        return 0;
-    }
-
-    return 1;
-}
-
-static int install_apk(const char *path)
-{
-    char *const argv[] = {"adb", "install", "-r", (char *)path, NULL};
-    return run_command(argv) == 0;
-}
-
-static void install_fdroid(void)
-{
-    char path[PATH_MAX];
-
-    set_status("Downloading F-Droid...");
-    draw_header("Install / Upgrade F-Droid");
-
-    if (!download_file("https://f-droid.org/F-Droid.apk",
-                       path, sizeof(path))) {
-        show_message("F-Droid", status_text);
-        return;
-    }
-
-    set_status("Installing / upgrading F-Droid...");
-    draw_header("Install / Upgrade F-Droid");
-
-    int ok = install_apk(path);
-    unlink(path);
-
-    show_message("F-Droid",
-        ok
-        ? "ADB completed the install command. Review the terminal output for confirmation."
-        : "Installation failed. Check that the device is connected and authorized.");
-}
-
-static int get_installerx_url(char *url, size_t url_size)
-{
-    FILE *p = popen(
-        "curl -fsSL --connect-timeout 15 "
-        "'https://api.github.com/repos/wxxsfxyzm/InstallerX-Revived/releases/latest' "
-        "| jq -r '.assets[]? | select(.name | endswith(\".apk\")) | .browser_download_url' "
-        "| head -n 1",
-        "r");
-
-    if (!p)
-        return 0;
-
-    if (!fgets(url, (int)url_size, p)) {
-        pclose(p);
-        return 0;
-    }
-
-    url[strcspn(url, "\r\n")] = '\0';
-    int rc = pclose(p);
-
-    return rc == 0 && strncmp(url, "https://", 8) == 0;
-}
-
-static void install_installerx(void)
-{
-    char url[2048] = "";
-    char path[PATH_MAX];
-
-    show_message("InstallerX",
-        "Looking up the latest InstallerX Revived APK from GitHub...");
-
-    if (!get_installerx_url(url, sizeof(url))) {
-        show_message("InstallerX",
-            "Could not find a downloadable APK in the latest release.\n"
-            "Check your connection, curl and jq, then try again.");
-        return;
-    }
-
-    if (!download_file(url, path, sizeof(path))) {
-        show_message("InstallerX", status_text);
-        return;
-    }
-
-    set_status("Installing / upgrading InstallerX Revived...");
-    draw_header("Install / Upgrade InstallerX");
-
-    int ok = install_apk(path);
-    unlink(path);
-
-    show_message("InstallerX",
-        ok
-        ? "ADB completed the install command. Review the terminal output for confirmation."
-        : "Installation failed. Check that the device is connected and authorized.");
-}
-
-/* ---------- Help and About ---------- */
-
-static void help_developer(void)
-{
-    show_message("Developer options",
-        "1. Open Android Settings.\n"
-        "2. Open About phone.\n"
-        "3. Tap Build number repeatedly until Developer options are enabled.\n"
-        "4. Return to Settings and open Developer options.\n"
-        "5. Enable Wireless debugging.\n"
-        "6. Use Pair device with the pairing port shown on your phone.\n\n"
-        "Menu names may vary by Android version and manufacturer.");
-}
-
-static void help_shizuku(void)
-{
-    show_message("Shizuku help",
-        "Shizuku allows supported apps to access certain system APIs.\n\n"
-        "Wireless debugging setup:\n"
-        "1. Enable Developer options and Wireless debugging.\n"
-        "2. Open Shizuku and follow its instructions.\n"
-        "3. Pair with the pairing port and code if requested.\n"
-        "4. Start the service and check Shizuku's status screen.\n\n"
-        "Pairing and connection ports are different. Use the correct port "
-        "shown by Android. Disable wireless debugging when you no longer need it.");
-}
-
-static void about(void)
-{
-    show_message("About IX Bootstrap",
-        "Its just a fkn third party apk installer and a f-droid store "
-        "installer for android cause google thought it would be funny to "
-        "put out yet another major f*ckup update....so anyways hope you "
-        "guys like this program I made after a shower thought also pls "
-        "follow me in instagram - 8bit_binary\n\n"
-        "Made by precisescope (GitHub) and 8bit_binary (Instagram).");
-}
-
-/* ---------- Main menu ---------- */
-
-static int menu(const char *title, const char *items[], int count)
+static int menu(void)
 {
     int selected = 0;
+    int ch;
+    int rows, cols;
 
-    for (;;) {
-        draw_header(title);
+    keypad(stdscr, TRUE);
+    mousemask(ALL_MOUSE_EVENTS, NULL);
+    mouseinterval(150);
 
-        int width = panel_width();
-        int x = panel_x(width);
-        int y = 5;
+    while (1) {
+        draw_menu(selected);
 
-        for (int i = 0; i < count; i++) {
-            if (y + i >= LINES - 3)
-                break;
+        ch = getch();
 
-            /*
-             * Draw a white menu panel with black text.
-             * The selected option gets a light-blue background.
-             */
-            if (colors_enabled) {
-                attron(COLOR_PAIR(CP_MENU));
-                mvhline(y + i, x, ' ', width);
+        switch (ch) {
+        case KEY_UP:
+            selected--;
 
-                if (i == selected) {
-                    attron(COLOR_PAIR(CP_SELECTED) | A_BOLD);
-                    mvaddnstr(y + i, x + 2, items[i], width - 4);
-                    attroff(COLOR_PAIR(CP_SELECTED) | A_BOLD);
-                } else {
-                    mvaddnstr(y + i, x + 2, items[i], width - 4);
-                }
+            if (selected < 0)
+                selected = (int)MENU_COUNT - 1;
 
-                attroff(COLOR_PAIR(CP_MENU));
-            } else {
-                mvhline(y + i, x, ' ', width);
+            break;
 
-                if (i == selected)
-                    attron(A_REVERSE | A_BOLD);
+        case KEY_DOWN:
+            selected++;
 
-                mvaddnstr(y + i, x + 2, items[i], width - 4);
+            if (selected >= (int)MENU_COUNT)
+                selected = 0;
 
-                if (i == selected)
-                    attroff(A_REVERSE | A_BOLD);
-            }
-        }
+            break;
 
-        draw_footer();
-        refresh();
-
-        int ch = getch();
-
-        if (ch == KEY_UP) {
-            selected = (selected - 1 + count) % count;
-        } else if (ch == KEY_DOWN) {
-            selected = (selected + 1) % count;
-        } else if (ch == '\n' || ch == KEY_ENTER) {
+        case '\n':
+        case KEY_ENTER:
             return selected;
-        } else if (ch == 'q' || ch == 'Q' || ch == 27) {
-            return count - 1;
-        } else if (ch == KEY_RESIZE) {
+
+        case 27:
+            return (int)MENU_COUNT - 1;
+
+        case KEY_RESIZE:
             clear();
+            break;
+
+        case KEY_MOUSE:
+            {
+                MEVENT event;
+
+                if (getmouse(&event) == OK &&
+                    (event.bstate & BUTTON1_CLICKED)) {
+
+                    getmaxyx(stdscr, rows, cols);
+
+                    (void)cols;
+
+                    if (rows >= 17) {
+                        int y = event.y;
+                        int index = y - 9;
+
+                        if (index >= 0 &&
+                            index < (int)MENU_COUNT) {
+                            selected = index;
+                            return selected;
+                        }
+                    }
+                }
+            }
+            break;
+
+        default:
+            if (ch == 'q' || ch == 'Q')
+                return (int)MENU_COUNT - 1;
+
+            break;
         }
     }
 }
 
-/* ---------- Entry point ---------- */
+/* ---------------------------------------------------------
+   Main
+   --------------------------------------------------------- */
 
 int main(void)
 {
-    setlocale(LC_ALL, "");
+    int choice;
 
     initscr();
     cbreak();
     noecho();
     keypad(stdscr, TRUE);
-    intrflush(stdscr, FALSE);
     curs_set(0);
 
     init_theme();
-    load_last_ip();
+    ensure_config_dir();
 
-    const char *items[] = {
-        "Pair device",
-        "Connect device",
-        "Install / Upgrade F-Droid",
-        "Install / Upgrade InstallerX",
-        "Developer options help",
-        "Shizuku help",
-        "About",
-        "Exit"
-    };
-
-    int running = 1;
-    int count = (int)(sizeof(items) / sizeof(items[0]));
-
-    while (running) {
-        int choice = menu("Main menu", items, count);
+    while (1) {
+        choice = menu();
 
         switch (choice) {
         case 0:
-            if (!adb_available()) {
-                show_message("ADB missing",
-                    "ADB was not found.\n\n"
-                    "Install it in Termux with:\n"
-                    "pkg install android-tools");
-            } else {
-                pair_device();
-            }
+            pair_device();
             break;
 
         case 1:
-            if (!adb_available()) {
-                show_message("ADB missing",
-                    "ADB was not found.\n\n"
-                    "Install it in Termux with:\n"
-                    "pkg install android-tools");
-            } else {
-                connect_device();
-            }
+            connect_device();
             break;
 
         case 2:
-            if (!adb_available()) {
-                show_message("ADB missing",
-                    "Install ADB with: pkg install android-tools");
-            } else if (!have_command("curl")) {
-                show_message("Dependency missing",
-                    "Install curl with: pkg install curl");
-            } else {
-                install_fdroid();
-            }
+            install_fdroid();
             break;
 
         case 3:
-            if (!adb_available()) {
-                show_message("ADB missing",
-                    "Install ADB with: pkg install android-tools");
-            } else if (!have_command("curl") || !have_command("jq")) {
-                show_message("Dependencies missing",
-                    "Install the required tools with:\n\n"
-                    "pkg install curl jq");
-            } else {
-                install_installerx();
-            }
+            install_installerx();
             break;
 
         case 4:
-            help_developer();
+            developer_help();
             break;
 
         case 5:
-            help_shizuku();
+            shizuku_help();
             break;
 
         case 6:
-            about();
+            about_page();
             break;
 
+        case 7:
         default:
-            running = 0;
-            break;
+            endwin();
+            printf("%s %s\n", APP_NAME, APP_VERSION);
+            printf("Thanks for using IX Bootstrap!\n");
+            return 0;
         }
     }
-
-    endwin();
-    return 0;
 }
 
