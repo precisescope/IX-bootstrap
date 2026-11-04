@@ -18,6 +18,7 @@ Pros :3
 - vibecode free
 - made to be simple as possible
 - not a corporate slop
+
 Cons (·n·)
 - needs basic common sense and brain to use (bad for vibecoders and power user LARPers
 Requirements
