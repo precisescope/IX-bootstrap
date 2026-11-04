@@ -1,6 +1,6 @@
-IX Bootstrap
+# IX Bootstrap
 
-A lightweight, ncurses-based Android ADB utility written in C for Termux. Pair devices, connect over Wireless debugging, download APKs, and access setup guides from a simple terminal interface.
+just a really really normal ass way of installing InstallerX and F-droid store in your android to start downloading APKs like normal gaain without what update google has put out
 
 Features
 
@@ -8,11 +8,18 @@ Features
 - ADB connection — Connect to a device using its IP address and connection port.
 - F-Droid — Download the F-Droid APK.
 - InstallerX Revived — Fetch the latest release APK from GitHub Releases.
-- APK installation — Install downloaded APKs through ADB.
-- Developer Options guide — Instructions for enabling Developer options.
-- Shizuku guide — Instructions for pairing Shizuku through Wireless debugging.
-- Terminal interface — An interactive ncurses-based menu.
+- APK installation — Install the APKs you downloaded with installerX
+- Developer Options guide — just how to enable developer options without talking in alien language-ish way
+- Shizuku guide — Instructions for pairing Shizuku through Wireless debug but although try to google how to do it on your phones model 
+- Terminal interface — An interactive ncurses-based menu that doesn't look prehistoric era
 
+pros and cons
+Pros :3
+- vibecode free
+- made to be simple as possible
+- not a corporate slop
+Cons (·n·)
+- needs basic common sense and brain to use (bad for vibecoders and power user LARPers
 Requirements
 
 - Android device running Termux
@@ -27,42 +34,42 @@ Installation
 Option 1: Clone and run
 
 Install the required runtime packages:
-
+```
 pkg update
 pkg install git android-tools curl jq
-
+```
 Clone the repository:
-
+```
 git clone https://github.com/precisescope/IX-bootstrap.git
 cd IX-bootstrap
-
+```
 Make the executable runnable and launch it:
-
+```
 chmod +x ix-bootstrap
 ./ix-bootstrap
-
+```
 «Note: The included executable is a precompiled binary. If it doesn't run on your device because of architecture or build compatibility, use Option 2 to compile it locally.»
 
-Option 2: Compile from source
+Option 2: Compile from source (if your phone is throwing a unknown tantrum) 
 
 Install the build dependencies:
-
+```
 pkg update
 pkg install git clang ncurses android-tools curl jq
-
+```
 Clone the repository:
-
+```
 git clone https://github.com/precisescope/IX-bootstrap.git
 cd IX-bootstrap
-
+```
 Compile:
-
+```
 clang -Wall -Wextra -O2 ix-bootstrap.c -o ix-bootstrap -lncurses
-
+```
 Run:
-
+```
 ./ix-bootstrap
-
+```
 Using Wireless ADB
 
 Pairing a device
