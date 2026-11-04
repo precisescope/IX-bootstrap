@@ -14,6 +14,7 @@ Features
 - Terminal interface — An interactive ncurses-based menu that doesn't look prehistoric era
 
 pros and cons
+
 Pros :3
 - vibecode free
 - made to be simple as possible
